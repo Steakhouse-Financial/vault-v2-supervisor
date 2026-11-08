@@ -478,6 +478,43 @@ contract VaultV2SupervisorTest is Test {
         assertFalse(supervisor.isVaultSupervised(address(0xB0B)));
     }
 
+    function test_Revoke_RevertsOnMalformedOrUnsupportedData() public {
+        supervisor.addGuardian(address(vault), GUARDIAN);
+
+        // Shorter than a selector, an unsupported selector, and a setOwner selector with no
+        // arguments: none of them resolves to a vault, so a guardian is not authorized.
+        bytes[] memory badData = new bytes[](3);
+        badData[0] = hex"010203";
+        badData[1] = abi.encodeWithSelector(bytes4(0xdeadbeef), address(vault));
+        badData[2] = abi.encodePacked(VaultV2Supervisor.setOwner.selector);
+
+        for (uint256 i; i < badData.length; ++i) {
+            vm.prank(GUARDIAN);
+            vm.expectRevert(VaultV2Supervisor.OnlyOwnerOrGuardian.selector);
+            supervisor.revoke(badData[i]);
+
+            // The owner is authorized for any data, but nothing was ever submitted for it.
+            vm.expectRevert(VaultV2Supervisor.DataNotTimelocked.selector);
+            supervisor.revoke(badData[i]);
+        }
+    }
+
+    function test_SetOwner_RevertsOnNoOpAtExecution() public {
+        address newOwner = address(0x999);
+
+        // The new owner differs from the vault's owner at submission time, so this is accepted.
+        supervisor.submit(abi.encodeWithSignature("setOwner(address,address)", address(nonOwnedVault), newOwner));
+
+        // The vault's owner transfers ownership to the same address in the meantime.
+        vm.prank(address(0xA11CE));
+        nonOwnedVault.setOwner(newOwner);
+
+        vm.warp(block.timestamp + TIMELOCK);
+
+        vm.expectRevert(VaultV2Supervisor.NoOp.selector);
+        supervisor.setOwner(nonOwnedVault, newOwner);
+    }
+
     function _contains(address[] memory list, address account) internal pure returns (bool) {
         for (uint256 i; i < list.length; ++i) {
             if (list[i] == account) return true;
